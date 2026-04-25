@@ -1,0 +1,22 @@
+# Git
+.git
+.gitignore
+
+# IDE / local
+.cursor
+.vscode
+*.swp
+*~
+
+# Test / build artifacts
+**/testdata/
+*.test
+/vendor/
+
+# Docs (not needed in image)
+*.md
+LICENSE
+
+# Docker
+Dockerfile
+.dockerignore

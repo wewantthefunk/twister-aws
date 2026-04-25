@@ -1,0 +1,12 @@
+{
+  "dataPath": "",
+  "mapPath": "data",
+  "listenAddress": ":8080",
+  "secretsCSV": "secrets.csv",
+  "secretsFile": "secrets.json",
+  "parametersCSV": "parameters.csv",
+  "parametersFile": "parameters.json",
+  "credentialsFile": "credentials.csv",
+  "pidFile": "twister.log",
+  "s3DataPath": "buckets"
+}
