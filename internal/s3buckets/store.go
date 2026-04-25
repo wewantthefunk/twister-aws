@@ -7,38 +7,49 @@ import (
 	"path/filepath"
 )
 
-// Manager maps S3 buckets to subdirectories of Root.
+// Manager maps S3 buckets to subdirectories of Root, one level per region:
+//   Root/{region}/{bucket}/
 type Manager struct {
 	Root string
+	// Events, if set, receives S3 event JSON when bucket notifications (ObjectCreated) match.
+	Events S3EventSink
 }
 
-// NewManager returns a Manager. Root should be a clean path; Root is created on first use.
+// NewManager returns a Manager. Root should be a clean path; per-region parents are created on demand.
 func NewManager(root string) *Manager {
 	return &Manager{Root: filepath.Clean(root)}
 }
 
-// BucketPath is the on-disk path for a bucket (may not exist).
-func (m *Manager) BucketPath(name string) string {
-	return filepath.Join(m.Root, name)
+// BucketPath is the on-disk path for a bucket in a given region (may not exist).
+func (m *Manager) BucketPath(region, name string) string {
+	r := NormalizeRegion(region)
+	return filepath.Join(m.Root, r, name)
 }
 
-// ensureRoot creates Root if needed.
-func (m *Manager) ensureRoot() error {
+// ensureRegionRoot creates Root and the region directory.
+func (m *Manager) ensureRegionRoot(region string) error {
 	if m == nil || m.Root == "" {
 		return errors.New("s3: empty root")
 	}
-	return os.MkdirAll(m.Root, 0o750)
+	r := NormalizeRegion(region)
+	if !IsValidRegionSegment(r) {
+		return ErrInvalidRegion
+	}
+	return os.MkdirAll(filepath.Join(m.Root, r), 0o750)
 }
 
-// CreateBucket creates a new directory for the bucket, or returns ErrBucketAlreadyExists.
-func (m *Manager) CreateBucket(name string) error {
+// CreateBucket creates a new directory for the bucket in the signing region, or returns ErrBucketAlreadyExists.
+func (m *Manager) CreateBucket(region, name string) error {
+	if !IsValidRegionSegment(NormalizeRegion(region)) {
+		return ErrInvalidRegion
+	}
 	if !IsValidBucketName(name) {
 		return ErrInvalidBucketName
 	}
-	if err := m.ensureRoot(); err != nil {
+	if err := m.ensureRegionRoot(region); err != nil {
 		return err
 	}
-	p := m.BucketPath(name)
+	p := m.BucketPath(region, name)
 	if fi, err := os.Stat(p); err == nil {
 		if fi.IsDir() {
 			return ErrBucketAlreadyExists
@@ -50,15 +61,18 @@ func (m *Manager) CreateBucket(name string) error {
 	return os.Mkdir(p, 0o750)
 }
 
-// DeleteBucket removes an **empty** bucket directory, or ErrNoSuchBucket / ErrBucketNotEmpty.
-func (m *Manager) DeleteBucket(name string) error {
+// DeleteBucket removes an **empty** bucket directory in the signing region, or ErrNoSuchBucket / ErrBucketNotEmpty.
+func (m *Manager) DeleteBucket(region, name string) error {
+	if !IsValidRegionSegment(NormalizeRegion(region)) {
+		return ErrInvalidRegion
+	}
 	if !IsValidBucketName(name) {
 		return ErrInvalidBucketName
 	}
 	if m == nil || m.Root == "" {
 		return errors.New("s3: empty root")
 	}
-	p := m.BucketPath(name)
+	p := m.BucketPath(region, name)
 	if fi, err := os.Stat(p); err != nil {
 		if os.IsNotExist(err) {
 			return ErrNoSuchBucket
@@ -72,6 +86,10 @@ func (m *Manager) DeleteBucket(name string) error {
 			return ErrBucketNotEmpty
 		}
 		return err
+	}
+	np, err := m.notificationFilePath(region, name)
+	if err == nil {
+		_ = os.Remove(np)
 	}
 	return nil
 }

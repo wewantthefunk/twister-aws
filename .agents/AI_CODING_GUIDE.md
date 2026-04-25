@@ -8,7 +8,7 @@ This document tells humans and **AI coding assistants** how to work on **Twister
 
 **Twister** is a small **Go** HTTP service that emulates a subset of **real AWS service wire protocols** (SigV4, JSON 1.1, IAM Query form/XML) so clients can point the **AWS CLI or SDK** at Twister with `--endpoint-url` and exercise flows locally (or in controlled environments).
 
-- **In scope today:** **Secrets Manager** and **SSM** (`X-Amz-Target`, JSON 1.1), **S3** bucket create/delete (REST `PUT`/`DELETE` with scope `s3`, directories under `s3DataPath`), **IAM** `CreateAccessKey` (form, XML), shared **SigV4**, file-backed data (`dataPath` / env).
+- **In scope today:** **Secrets Manager** and **SSM** (`X-Amz-Target`, JSON 1.1), **S3** path-style REST (scope `s3`: buckets + objects under `s3DataPath/{region}/…`), **IAM** `CreateAccessKey` (form, XML), shared **SigV4**, file-backed data (`dataPath` / env).
 - **Not a goal:** full parity with every AWS API, production-grade multi-tenant hardening, or reimplementing the entire AWS surface area unless explicitly asked.
 
 When adding a feature, prefer matching **AWS’s documented** request/response shape where practical so the **official AWS CLI** keeps working with `--endpoint-url`.

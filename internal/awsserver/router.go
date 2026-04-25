@@ -11,6 +11,7 @@ import (
 
 	"github.com/christian/twister/internal/credentials"
 	"github.com/christian/twister/internal/iam"
+	"github.com/christian/twister/internal/sqs"
 )
 
 // Service is one AWS “service” namespace (e.g. secretsmanager, ssm) handling operations named in X-Amz-Target: service.Operation.
@@ -28,6 +29,8 @@ type Service interface {
 type Router struct {
 	Provider *credentials.Provider
 	IAM      *iam.Service
+	// SQS is the SQS Query API (form POST) when the credential scope service is "sqs". If nil, requests are rejected.
+	SQS *sqs.Service
 	services map[string]Service
 }
 
@@ -118,6 +121,15 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if signingService == "sqs" {
+		if rt.SQS == nil {
+			sqs.WriteNotConfigured(w, rid)
+			return
+		}
+		rt.SQS.Handle(w, r, region, body, rid)
+		return
+	}
+
 	if !RequireJSONContentType(w, r.Header.Get("Content-Type")) {
 		return
 	}
@@ -154,7 +166,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if canonSign != "secretsmanager" && canonSign != "ssm" {
 		WriteJSON(w, http.StatusBadRequest, ErrorResponse{
 			Type:    "InvalidRequestException",
-			Message: fmt.Sprintf("unexpected signing service in credential scope: %q (expected iam, secretsmanager, or ssm)", signingService),
+			Message: fmt.Sprintf("unexpected signing service in credential scope: %q (expected secretsmanager, ssm, or use sqs/iam for query APIs)", signingService),
 		})
 		return
 	}

@@ -10,7 +10,7 @@ Run commands from the **repository root** so relative paths resolve.
 |------|---------|
 | `.agents/AI_CODING_GUIDE.md` | **Contributor & AI assistant guide** — project purpose, patterns, tests, when to update this README |
 | `cmd/twister/` | `main` — compose config, credentials, `awsserver` routes, and listen |
-| `internal/awsserver/` | HTTP front door: **SigV4**; `PrimaryHandler` routes **S3** `PUT`/`DELETE` on `/bucket`, then `POST /` to JSON **1.1** or IAM |
+| `internal/awsserver/` | **SigV4**; `PrimaryHandler` routes **S3** `GET`/`HEAD`/`PUT`/`DELETE` on `/bucket/...`, then `POST /` to JSON **1.1** or IAM |
 | `internal/s3buckets/` | **S3** bucket operations as directories under **`s3DataPath`** (default **`buckets`**) |
 | `internal/iam/` | **IAM** Query API subset (`CreateAccessKey` → XML), persists to **`credentials.csv`** |
 | `internal/credentials/` | CSV allowlist + **`Provider`** (`VerifyRequest` / SigV4, `AddAccessKeyAndPersist`) |
@@ -26,9 +26,9 @@ Run commands from the **repository root** so relative paths resolve.
 | `server.json` | Listen address, optional **`dataPath`**, per-filename entries, and optional **`mapPath`** (host dir for `make run` → `/app` in Docker; ignored at runtime) |
 | `data/` | Example data directory (default **`mapPath`** in root `server.json`); `data/server.json` is used inside the container when that mount is in use |
 | `credentials.csv`, **`secrets.csv`**, `secrets.json`, **`parameters.csv`**, `parameters.json` | Data files; default next to the process unless **`dataPath`** in `server.json` moves them to one directory |
-| **`buckets/`** (see **`s3DataPath`**) | On-disk **S3 buckets**: one subfolder per bucket name (path-style `PUT`/`DELETE` to Twister) |
+| **`buckets/`** (see **`s3DataPath`**) | On-disk **S3** layout: **`buckets/{region}/{bucketName}/`** — the signing **region** scopes each bucket directory |
 
-**Flow:** SigV4 is verified for every protected call. `PUT` / `DELETE` requests to a **single path segment** (e.g. `/my-bucket`) with credential scope **`s3`** are handled as **S3** bucket create/delete (see `internal/s3buckets`, `internal/awsserver/primary.go`). All other **JSON 1.1** traffic uses `POST /` and `awsserver.Router`. The **signing service** in the credential scope selects the product:
+**Flow:** SigV4 is verified for every protected call. Path-style **`s3`** requests (`GET`/`HEAD`/`PUT`/`DELETE` under `/{bucket}/...`) go to **`internal/s3buckets`** (see `PrimaryHandler`). All other **JSON 1.1** traffic uses `POST /` and `awsserver.Router`. The **signing service** in the credential scope selects the product:
 
 - **`iam`** (used by the AWS CLI for `aws iam …`) — **form-encoded** body (`Action=…`), **not** `X-Amz-Target`. Today **`CreateAccessKey`** is supported; the new key pair is appended and **`credentials.csv`** is rewritten.
 - **`secretsmanager`** — **`application/x-amz-json-1.1`**, **`X-Amz-Target`** (e.g. `secretsmanager.GetSecretValue` → `GetSecretValue`) → `internal/secretsmanager`.
@@ -269,7 +269,7 @@ Twister implements **path-style** bucket **create** and **delete** so the **AWS 
 export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
 
-# Creates the directory: <s3 root>/my-demo-buck/   (s3 root defaults to ./buckets or $dataPath/buckets)
+# Creates: <s3 root>/<region>/my-demo-buck/   (SigV4 region, e.g. us-east-1; s3 root defaults to ./buckets)
 aws s3 mb s3://my-demo-buck \
   --endpoint-url http://127.0.0.1:8080 \
   --region us-east-1
@@ -279,7 +279,16 @@ aws s3 rb s3://my-demo-buck \
   --region us-east-1
 ```
 
-`rb` only succeeds if the bucket directory is **empty** (real S3 behavior). Bucket names must follow the **3–63** character **DNS–style** rules (lowercase letters, numbers, dot, hyphen). **Object** APIs (`cp`, `get-object`, …) are not implemented yet.
+`rb` only succeeds if the bucket directory is **empty** (real S3 behavior). Bucket names must follow the **3–63** character **DNS–style** rules (lowercase letters, numbers, dot, hyphen).
+
+**Objects** (path-style, same region scoping as buckets):
+
+```bash
+aws s3 cp ./go.mod s3://first-bucket/go.mod --endpoint-url http://127.0.0.1:8080 --region us-east-1
+aws s3 cp s3://first-bucket/go.mod - --endpoint-url http://127.0.0.1:8080 --region us-east-1
+```
+
+Object keys may use `/` (stored as subfolders under `buckets/<region>/<bucket>/`). The request body is limited to **`MaxBodyBytes` (1 MiB)** in the server for `PutObject` (enough for small files and tests).
 
 In **Docker**, mount your data directory to **`/app`**: the default bucket root is **`/app/buckets`** (or override with **`TWISTER_S3_DATA_PATH`**).
 
@@ -302,7 +311,7 @@ Same as **`go test ./...`**.
 
 - **Secrets Manager:** **`secretsmanager.GetSecretValue`** and **`secretsmanager.CreateSecret`** (with `SecretString`; upsert by name) are implemented. Other `X-Amz-Target` values for that service return error-shaped JSON. Unregistered **service** names in `X-Amz-Target` are rejected.
 - **Parameter Store (SSM):** **`ssm.GetParameter`** and **`ssm.PutParameter`** are implemented for `String` / `StringList` / `SecureString` (with the `WithDecryption` rule above). Other SSM operations are not implemented yet.
-- **S3:** path-style **`PUT /{bucket}`** and **`DELETE /{bucket}`** — create and delete **empty** **buckets** as subdirectories of **`s3DataPath`**. **Objects** are not supported yet.
+- **S3:** path-style **`PUT/GET/HEAD/DELETE`**: **CreateBucket** / **DeleteBucket** on `/{bucket}`; **PutObject** / **GetObject** / **DeleteObject** on `/{bucket}/{key}` (arbitrary `key` depth under **`s3DataPath`/`{region}`/`{bucket}`**). `GET`/`DELETE` a bucket name alone (list / empty delete semantics) is not fully modeled.
 - **IAM:** **`CreateAccessKey`** on the Query API (form body). The credential scope must be **`iam`**, not `secretsmanager` or `ssm`.
 - SigV4 checks use the per-service name in the credential scope (e.g. **`secretsmanager`**, **`ssm`**, **`iam`**), optional **±15 minute** clock skew on `X-Amz-Date`, and support for **`UNSIGNED-PAYLOAD`**, **empty** `X-Amz-Content-Sha256` (hashed body), or a **hex** content SHA256, matching common AWS CLI / SDK behavior. The scope’s service name must **match** the `X-Amz-Target` prefix.
 

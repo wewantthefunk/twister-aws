@@ -2,17 +2,20 @@ package awsserver
 
 import "testing"
 
-func TestIsS3SingleBucketPath(t *testing.T) {
-	if isS3SingleBucketPath("/health") || isS3SingleBucketPath("/refresh") {
+func TestIsS3RESTPath(t *testing.T) {
+	if isS3RESTPath("/health") || isS3RESTPath("/refresh") {
 		t.Fatal("admin paths not s3")
 	}
-	if !isS3SingleBucketPath("/my-bucket") {
+	if !isS3RESTPath("/my-bucket") {
 		t.Fatal("bucket path")
 	}
-	if isS3SingleBucketPath("/a/b") {
+	if !isS3RESTPath("/first-bucket/go.mod") {
 		t.Fatal("object path")
 	}
-	if isS3SingleBucketPath("/") {
+	if isS3RESTPath("/") {
 		t.Fatal("root")
+	}
+	if isS3RESTPath("") {
+		t.Fatal("empty")
 	}
 }

@@ -41,6 +41,9 @@ func TestLoad_partialMergesDefaults(t *testing.T) {
 	if c.S3DataPath != Default.S3DataPath {
 		t.Fatalf("s3DataPath default: %#v", c)
 	}
+	if c.SQSDataPath != Default.SQSDataPath {
+		t.Fatalf("sqsDataPath default: %#v", c)
+	}
 }
 
 func TestLoad_mapPath_preserved(t *testing.T) {

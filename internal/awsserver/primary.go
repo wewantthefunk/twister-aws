@@ -11,15 +11,14 @@ import (
 	"github.com/christian/twister/internal/s3buckets"
 )
 
-// PrimaryHandler routes S3 bucket REST (path-style PUT/DELETE /bucket) before the JSON 1.1 POST / handler.
+// PrimaryHandler routes S3 path-style REST (GET/HEAD/PUT/DELETE /bucket/...) before the JSON 1.1 POST / handler.
 type PrimaryHandler struct {
 	Provider *credentials.Provider
 	S3       *s3buckets.Manager
 	API      http.Handler
 }
 
-// ServeHTTP dispatches: non-POST to / is rejected except where handled by other mux patterns;
-// PUT/DELETE on a single top-level path segment to S3; POST / to the JSON 1.1 stack.
+// ServeHTTP dispatches: S3 REST; POST / to JSON 1.1; other methods as appropriate.
 func (h *PrimaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h == nil || h.API == nil {
 		http.Error(w, "not configured", http.StatusInternalServerError)
@@ -35,16 +34,22 @@ func (h *PrimaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 
-	// S3 path-style: PUT/DELETE http://endpoint/bucket — signing scope must be "s3".
-	if h.S3 != nil && (r.Method == http.MethodPut || r.Method == http.MethodDelete) && isS3SingleBucketPath(path) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, MaxBodyBytes))
-		if err != nil {
-			http.Error(w, "invalid body", http.StatusBadRequest)
-			return
+	// S3 path-style: signing scope must be "s3"; object keys use additional path segments.
+	if h.S3 != nil && isS3Method(r.Method) && isS3RESTPath(path) {
+		var putBody []byte
+		var err error
+		if r.Method == http.MethodPut {
+			putBody, err = io.ReadAll(io.LimitReader(r.Body, MaxBodyBytes))
+			if err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+		} else {
+			_, _ = io.Copy(io.Discard, r.Body)
 		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.Body = io.NopCloser(bytes.NewReader(putBody))
 
-		_, signingService, err := h.Provider.VerifyRequest(r, body, time.Now().UTC())
+		region, signingService, err := h.Provider.VerifyRequest(r, putBody, time.Now().UTC())
 		if err != nil {
 			s3buckets.WriteAccessDenied(w, err.Error())
 			return
@@ -53,7 +58,7 @@ func (h *PrimaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s3buckets.WriteRESTError(w, http.StatusForbidden, "AccessDenied", "The credential scope service must be s3 for this request.")
 			return
 		}
-		h.S3.HandleBucketREST(w, r)
+		h.S3.HandleS3REST(w, r, region, putBody)
 		return
 	}
 
@@ -68,16 +73,22 @@ func (h *PrimaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
-func isS3SingleBucketPath(p string) bool {
+func isS3Method(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func isS3RESTPath(p string) bool {
 	if p == "/health" || p == "/refresh" {
 		return false
 	}
 	if len(p) < 2 || p[0] != '/' {
 		return false
 	}
-	rest := p[1:]
-	if rest == "" {
-		return false
-	}
-	return !strings.ContainsRune(rest, '/')
+	rest := strings.Trim(p, "/")
+	return rest != ""
 }

@@ -25,6 +25,8 @@ type Server struct {
 	PIDFile         string `json:"pidFile"`
 	// S3DataPath is the **directory basename** (with dataPath) or relative path where S3 buckets are stored as subfolders.
 	S3DataPath string `json:"s3DataPath"`
+	// SQSDataPath is the directory (under dataPath) where per-region SQS queue JSON files are stored.
+	SQSDataPath string `json:"sqsDataPath"`
 }
 
 // Default is used when a config file is missing or a field is omitted/empty.
@@ -39,6 +41,7 @@ var Default = Server{
 	CredentialsFile: "credentials.csv",
 	PIDFile:         "twister.log",
 	S3DataPath:      "buckets",
+	SQSDataPath:     "sqs",
 }
 
 // Load reads JSON from path. If the file does not exist, returns Default with a nil error.
@@ -83,6 +86,9 @@ func mergeServerDefaults(c *Server) {
 	}
 	if c.S3DataPath == "" {
 		c.S3DataPath = Default.S3DataPath
+	}
+	if c.SQSDataPath == "" {
+		c.SQSDataPath = Default.SQSDataPath
 	}
 }
 

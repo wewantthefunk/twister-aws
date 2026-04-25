@@ -63,11 +63,11 @@ func Verify(r *http.Request, body []byte, allowedSecrets map[string]string, now 
 
 	hdrs := headerMap(r)
 	method := r.Method
-	path := r.URL.Path
+	path := r.URL.EscapedPath()
 	if path == "" {
 		path = "/"
 	}
-	query := r.URL.RawQuery
+	query := canonicalQueryV4(r.URL.Query())
 
 	cr := canonicalRequest(method, path, query, signedNames, hdrs, payloadHash)
 	crHash := sha256Hex([]byte(cr))
@@ -156,7 +156,7 @@ func parseCredentialScope(credential string) (accessKey, dateStamp, region, serv
 
 func isAllowedSigningService(s string) bool {
 	switch s {
-	case "secretsmanager", "iam", "ssm", "s3":
+	case "secretsmanager", "iam", "ssm", "s3", "sqs":
 		return true
 	default:
 		return false

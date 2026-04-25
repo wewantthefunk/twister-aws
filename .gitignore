@@ -34,5 +34,7 @@ go.work.sum
 *.pid
 
 data/server.json
+data/buckets/
+data/sqs/
 
 __pycache__/

@@ -18,8 +18,17 @@ import (
 	"github.com/christian/twister/internal/s3buckets"
 	"github.com/christian/twister/internal/secretsmanager"
 	"github.com/christian/twister/internal/secretstore"
+	"github.com/christian/twister/internal/sqs"
 	"github.com/christian/twister/internal/ssm"
 )
+
+// sqsSink implements s3buckets.S3EventSink for S3 → SQS notifications.
+type sqsSink struct{ m *sqs.Manager }
+
+func (a *sqsSink) EnqueueS3Event(sqsRegion, queueName, eventJSON string) error {
+	_, _, err := a.m.SendMessage(sqsRegion, queueName, eventJSON)
+	return err
+}
 
 // getenvFirst returns the first non-empty environment variable among keys, or fallback.
 func getenvFirst(keys []string, fallback string) string {
@@ -50,6 +59,13 @@ func main() {
 		log.Fatalf("s3 data root %q: %v", s3Root, err)
 	}
 	s3mgr := s3buckets.NewManager(s3Root)
+
+	sqsRoot := getenvFirst([]string{"TWISTER_SQS_DATA_PATH"}, config.ResolveWithDataPath(dataPath, cfg.SQSDataPath))
+	if err := os.MkdirAll(filepath.Clean(sqsRoot), 0o750); err != nil {
+		log.Fatalf("sqs data root %q: %v", sqsRoot, err)
+	}
+	sqsSvc := sqs.NewService(sqsRoot)
+	s3mgr.Events = &sqsSink{m: sqsSvc.Manager}
 
 	data := secretstore.NewStore()
 
@@ -94,8 +110,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	router.SQS = sqsSvc
 
-	log.Printf("Twister listening on %s (dataPath=%q, s3Root=%q, %d secrets, %d parameters, %d access keys; secrets CSV %s, parameters CSV %s, creds %s)", cfg.ListenAddress, dataPath, s3Root, data.Count(), pstore.Count(), provider.AccessKeyCount(), secretsCSVPath, parametersCSVPath, credPath)
+	log.Printf("Twister listening on %s (dataPath=%q, s3Root=%q, sqsRoot=%q, %d secrets, %d parameters, %d access keys; secrets CSV %s, parameters CSV %s, creds %s)", cfg.ListenAddress, dataPath, s3Root, sqsRoot, data.Count(), pstore.Count(), provider.AccessKeyCount(), secretsCSVPath, parametersCSVPath, credPath)
 
 	ref := &awsserver.Refresher{
 		Provider:           provider,

@@ -122,6 +122,61 @@ func TestVerify_acceptsValidSignature_iam(t *testing.T) {
 	}
 }
 
+func TestVerify_acceptsValidSignature_s3_get_queryOutOfOrder(t *testing.T) {
+	accessKey := "AKTEST"
+	secretKey := "secret"
+	region := "us-east-1"
+	dateStamp := "20200102"
+	amzDate := "20200102T120000Z"
+	host := "127.0.0.1:8080"
+	empty := []byte{}
+	payloadHash := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+	u := &url.URL{
+		Scheme: "http",
+		Host:   host,
+		Path:   "/my-bucket",
+		// Intentionally not lexicographic order; client signs canonical form.
+		RawQuery: "z=1&list-type=2&a=2",
+	}
+	hdrs := map[string][]string{
+		"host":                 {host},
+		"x-amz-content-sha256": {payloadHash},
+		"x-amz-date":           {amzDate},
+	}
+	signedNames := []string{"host", "x-amz-content-sha256", "x-amz-date"}
+	sort.Strings(signedNames)
+	signedList := strings.Join(signedNames, ";")
+
+	// server-side canonicalization must match: sorted query, not RawQuery order.
+	canonQ := canonicalQueryV4(u.Query())
+	cr := canonicalRequest("GET", u.EscapedPath(), canonQ, signedNames, hdrs, payloadHash)
+	crHash := sha256Hex([]byte(cr))
+	credScope := dateStamp + "/" + region + "/s3/aws4_request"
+	sts := stringToSign(amzDate, credScope, crHash)
+	sig := hmacSHA256(signingKey(secretKey, dateStamp, region, "s3"), sts)
+	sigHex := hex.EncodeToString(sig)
+
+	req := &http.Request{
+		Method: "GET",
+		URL:    u,
+		Host:   host,
+		Header: http.Header{
+			"X-Amz-Content-Sha256": {payloadHash},
+			"X-Amz-Date":           {amzDate},
+			"Authorization":        {formatAuthorization(accessKey, dateStamp, region, "s3", signedList, sigHex)},
+		},
+	}
+
+	gotRegion, gotSvc, err := Verify(req, empty, map[string]string{accessKey: secretKey}, time.Date(2020, 1, 2, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRegion != region || gotSvc != "s3" {
+		t.Fatalf("region = %q service = %q", gotRegion, gotSvc)
+	}
+}
+
 func TestVerify_unknownAccessKey(t *testing.T) {
 	req := httptestMinimalReq(t, "missing", "secret")
 	_, _, err := Verify(req, []byte(`{}`), map[string]string{"other": "x"}, time.Date(2020, 1, 2, 12, 0, 0, 0, time.UTC))
