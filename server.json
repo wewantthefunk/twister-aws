@@ -8,5 +8,7 @@
   "parametersFile": "parameters.json",
   "credentialsFile": "credentials.csv",
   "pidFile": "twister.log",
-  "s3DataPath": "buckets"
+  "s3DataPath": "buckets",
+  "sqsDataPath": "sqs",
+  "lambdaDataPath": "lambda"
 }

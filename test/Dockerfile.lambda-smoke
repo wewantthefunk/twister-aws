@@ -1,0 +1,4 @@
+# Image used by test/test-lambda-cli.sh and test/lambda_invoke_boto3.py
+# Twister runs `docker run -i` with the event on stdin; `cat` copies it to stdout.
+FROM alpine:3.20
+ENTRYPOINT ["/bin/cat"]

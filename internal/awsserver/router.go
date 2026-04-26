@@ -68,6 +68,8 @@ func canonicalJSONServiceName(s string) string {
 		return "ssm"
 	case "secretsmanager":
 		return "secretsmanager"
+	case "lambda_20150331":
+		return "lambda"
 	default:
 		return s
 	}
@@ -163,10 +165,10 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if canonSign != "secretsmanager" && canonSign != "ssm" {
+	if canonSign != "secretsmanager" && canonSign != "ssm" && canonSign != "lambda" {
 		WriteJSON(w, http.StatusBadRequest, ErrorResponse{
 			Type:    "InvalidRequestException",
-			Message: fmt.Sprintf("unexpected signing service in credential scope: %q (expected secretsmanager, ssm, or use sqs/iam for query APIs)", signingService),
+			Message: fmt.Sprintf("unexpected signing service in credential scope: %q (expected secretsmanager, ssm, lambda, or use sqs/iam for query APIs)", signingService),
 		})
 		return
 	}

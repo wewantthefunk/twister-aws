@@ -8,7 +8,7 @@ This document tells humans and **AI coding assistants** how to work on **Twister
 
 **Twister** is a small **Go** HTTP service that emulates a subset of **real AWS service wire protocols** (SigV4, JSON 1.1, IAM Query form/XML) so clients can point the **AWS CLI or SDK** at Twister with `--endpoint-url` and exercise flows locally (or in controlled environments).
 
-- **In scope today:** **Secrets Manager** and **SSM** (`X-Amz-Target`, JSON 1.1), **S3** path-style REST (scope `s3`: buckets + objects under `s3DataPath/{region}/…`), **IAM** `CreateAccessKey` (form, XML), shared **SigV4**, file-backed data (`dataPath` / env).
+- **In scope today:** **Secrets Manager** and **SSM** (`X-Amz-Target`, JSON 1.1), **S3** path-style REST (scope `s3`: buckets + objects under `s3DataPath/{region}/…`), **SQS** (scope `sqs`), **Lambda**-compatible control/invoke (scope `lambda`, `X-Amz-Target` `Lambda_20150331.*`, Docker; see **`docs/LAMBDA.md`**), **IAM** `CreateAccessKey` (form, XML), shared **SigV4**, file-backed data (`dataPath` / env).
 - **Not a goal:** full parity with every AWS API, production-grade multi-tenant hardening, or reimplementing the entire AWS surface area unless explicitly asked.
 
 When adding a feature, prefer matching **AWS’s documented** request/response shape where practical so the **official AWS CLI** keeps working with `--endpoint-url`.
@@ -22,7 +22,7 @@ When adding a feature, prefer matching **AWS’s documented** request/response s
 | **Entry** | `cmd/twister` — `main` wires `config`, `credentials`, `secretstore`, `paramstore`, `s3buckets`, `awsserver` (`PrimaryHandler` + `Router`), mux (`/` + `/health` + `/refresh`), `net/http.Server`. |
 | **Libraries** | `internal/*` — not importable as an external module API; all product logic lives here. |
 | **Configuration** | `server.json` + env (see `README.md`). `config.ResolveWithDataPath` for basenames + `dataPath`. |
-| **Auth** | `credentials.Provider` + CSV allowlist; `sigv4.Verify` uses the **signing service** in the credential scope (`secretsmanager`, `ssm`, `s3`, `iam`, …). For JSON 1.1, the scope must **match** the `X-Amz-Target` service prefix (after canonicalization). |
+| **Auth** | `credentials.Provider` + CSV allowlist; `sigv4.Verify` uses the **signing service** in the credential scope (`secretsmanager`, `ssm`, `s3`, `sqs`, `lambda`, `iam`, …). For JSON 1.1, the scope must **match** the `X-Amz-Target` service prefix (after canonicalization). |
 | **HTTP routing** | `internal/awsserver.Router` — read body, verify SigV4, then by scope: **IAM** form handler vs **JSON 1.1** `X-Amz-Target` to `awsserver.Service` implementations. |
 | **Service modules** | One package per “AWS product” surface (e.g. `internal/secretsmanager`, `internal/ssm`, `internal/iam`); implement `awsserver.Service` where applicable; IAM Query stays separate from JSON 1.1. |
 | **Persistence** | Atomic rewrite patterns (temp file + rename) for CSV/JSON; locks where maps are shared (see `credentials.Provider`, `secretstore`, `paramstore`). |

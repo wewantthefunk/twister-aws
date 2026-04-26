@@ -14,6 +14,7 @@ import (
 	"github.com/christian/twister/internal/config"
 	"github.com/christian/twister/internal/credentials"
 	"github.com/christian/twister/internal/iam"
+	"github.com/christian/twister/internal/lambda"
 	"github.com/christian/twister/internal/paramstore"
 	"github.com/christian/twister/internal/s3buckets"
 	"github.com/christian/twister/internal/secretsmanager"
@@ -67,6 +68,13 @@ func main() {
 	sqsSvc := sqs.NewService(sqsRoot)
 	s3mgr.Events = &sqsSink{m: sqsSvc.Manager}
 
+	lambdaRoot := getenvFirst([]string{"TWISTER_LAMBDA_DATA_PATH"}, config.ResolveWithDataPath(dataPath, cfg.LambdaDataPath))
+	if err := os.MkdirAll(filepath.Clean(lambdaRoot), 0o750); err != nil {
+		log.Fatalf("lambda data root %q: %v", lambdaRoot, err)
+	}
+	lambdaSvc := lambda.NewService(lambdaRoot)
+	sqsSvc.Manager.DequeueHook = lambdaSvc.OnSQSMessages
+
 	data := secretstore.NewStore()
 
 	secretsCSVPath := getenvFirst([]string{"TWISTER_SECRETS_CSV", "SECRETS_LOCAL_SECRETS_CSV"}, config.ResolveWithDataPath(dataPath, cfg.SecretsCSV))
@@ -106,13 +114,13 @@ func main() {
 	}
 	fmt.Fprintf(os.Stdout, "Twister pid %d (also written to %s)\n", pid, pidLogPath)
 
-	router, err := awsserver.NewRouter(provider, iam.New(provider), secretsmanager.New(data, secretsCSVPath), ssm.New(pstore, parametersCSVPath))
+	router, err := awsserver.NewRouter(provider, iam.New(provider), secretsmanager.New(data, secretsCSVPath), ssm.New(pstore, parametersCSVPath), lambdaSvc)
 	if err != nil {
 		log.Fatal(err)
 	}
 	router.SQS = sqsSvc
 
-	log.Printf("Twister listening on %s (dataPath=%q, s3Root=%q, sqsRoot=%q, %d secrets, %d parameters, %d access keys; secrets CSV %s, parameters CSV %s, creds %s)", cfg.ListenAddress, dataPath, s3Root, sqsRoot, data.Count(), pstore.Count(), provider.AccessKeyCount(), secretsCSVPath, parametersCSVPath, credPath)
+	log.Printf("Twister listening on %s (dataPath=%q, s3Root=%q, sqsRoot=%q, lambdaRoot=%q, %d secrets, %d parameters, %d access keys; secrets CSV %s, parameters CSV %s, creds %s)", cfg.ListenAddress, dataPath, s3Root, sqsRoot, lambdaRoot, data.Count(), pstore.Count(), provider.AccessKeyCount(), secretsCSVPath, parametersCSVPath, credPath)
 
 	ref := &awsserver.Refresher{
 		Provider:           provider,

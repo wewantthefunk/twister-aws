@@ -11,6 +11,8 @@ func Test_canonicalJSONServiceName(t *testing.T) {
 		{"amazonssm", "ssm"},
 		{"secretsmanager", "secretsmanager"},
 		{"SecretsManager", "secretsmanager"},
+		{"lambda", "lambda"},
+		{"Lambda_20150331", "lambda"},
 	}
 	for _, tc := range tests {
 		if got := canonicalJSONServiceName(tc.in); got != tc.want {

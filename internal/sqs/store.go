@@ -18,6 +18,10 @@ import (
 type Manager struct {
 	Root string
 	mu   sync.Mutex
+	// DequeueHook, if set, is called (synchronously) after messages are received and
+	// removed from the queue (i.e. not when peeking with VisibilityTimeout==0). Used for
+	// Lambda event source style triggers.
+	DequeueHook func(region, queueName string, msgs []Message)
 }
 
 // NewManager returns a Manager. Root should be the cleaned base path (e.g. data/sqs).
@@ -160,6 +164,10 @@ func (m *Manager) ReceiveMessage(region, queueName string, n int, visibilityTime
 	qf.Messages = qf.Messages[n:]
 	if err := m.writeFileLocked(p, qf); err != nil {
 		return nil, err
+	}
+	if m.DequeueHook != nil && len(out) > 0 {
+		// region, queue: recover from path — we have region, queueName in closure via func args
+		m.DequeueHook(region, queueName, out)
 	}
 	return out, nil
 }

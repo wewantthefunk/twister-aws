@@ -1,6 +1,6 @@
 # Twister
 
-**Twister** is a single HTTP service that aims to be a **drop-in replacement for AWS APIs** at the wire level: point the AWS SDK or CLI at Twister with `--endpoint-url` and the same `X-Amz-Target` / JSON 1.1 / SigV4 contracts (and **S3**–style **REST** for buckets). Implemented surfaces include **Secrets Manager**, **SSM Parameter Store**, and path-style **S3 bucket** create/delete (each bucket is a **folder** under a configurable root, e.g. `buckets/` inside your mounted data volume in Docker).
+**Twister** is a single HTTP service that aims to be a **drop-in replacement for AWS APIs** at the wire level: point the AWS SDK or CLI at Twister with `--endpoint-url` and the same `X-Amz-Target` / JSON 1.1 / SigV4 contracts (and **S3**–style **REST** for buckets). Implemented surfaces include **Secrets Manager**, **SSM Parameter Store**, path-style **S3 bucket** create/delete, **SQS** (query / JSON to `POST /`), a **Lambda**-compatible **control and invoke** API (Docker-backed; see **`docs/LAMBDA.md`**) and optional **S3 → SQS** event notifications. Each S3 bucket is a **folder** under a configurable root, e.g. `buckets/` inside your mounted data volume in Docker.
 
 ## Layout
 
@@ -9,9 +9,12 @@ Run commands from the **repository root** so relative paths resolve.
 | Path | Purpose |
 |------|---------|
 | `.agents/AI_CODING_GUIDE.md` | **Contributor & AI assistant guide** — project purpose, patterns, tests, when to update this README |
+| `docs/LAMBDA.md` | **Lambda** feature: Docker requirement, `lambdaDataPath` / **`TWISTER_LAMBDA_DATA_PATH`**, `aws lambda` CLI, SQS → Lambda (dequeue trigger) |
 | `cmd/twister/` | `main` — compose config, credentials, `awsserver` routes, and listen |
 | `internal/awsserver/` | **SigV4**; `PrimaryHandler` routes **S3** `GET`/`HEAD`/`PUT`/`DELETE` on `/bucket/...`, then `POST /` to JSON **1.1** or IAM |
 | `internal/s3buckets/` | **S3** bucket operations as directories under **`s3DataPath`** (default **`buckets`**) |
+| `internal/sqs/` | **SQS** queue files under **`sqsDataPath`** (default **`sqs`**) and optional post-dequeue hook to **`internal/lambda`** |
+| `internal/lambda/` | **Lambda** JSON 1.1 API subset (`lambda` / **`Lambda_20150331`**) — registry on disk, **Docker** `run` per invoke |
 | `internal/iam/` | **IAM** Query API subset (`CreateAccessKey` → XML), persists to **`credentials.csv`** |
 | `internal/credentials/` | CSV allowlist + **`Provider`** (`VerifyRequest` / SigV4, `AddAccessKeyAndPersist`) |
 | `internal/sigv4/` | SigV4 crypto (used by `credentials`) |
@@ -19,10 +22,14 @@ Run commands from the **repository root** so relative paths resolve.
 | `internal/secretsmanager/` | **AWS Secrets Manager** API operations |
 | `internal/paramstore/` | In-memory **SSM parameters**; loads **`parameters.csv`** (and optional `parameters.json`) at startup |
 | `internal/ssm/` | **AWS SSM** Parameter Store–style API (`GetParameter`, `PutParameter`) |
-| `test/test-aws-cli.sh` | Smoke test (starts Twister, calls AWS CLI) |
+| `test/test-aws-cli.sh` | Smoke test (waits for Twister; AWS CLI **Secrets Manager** + **SSM**) |
+| `test/test-lambda-cli.sh` | Lambda smoke: **`docker build`** ( **`test/Dockerfile.lambda-smoke`** ), `aws lambda create-function` + `invoke` + delete |
 | `test/get_secret_boto3.py` | **Python + boto3** example: `get-secret-value` to stdout |
 | `test/get_parameter_boto3.py` | **Python + boto3** example: SSM `get-parameter` value to stdout |
-| `test/test-aws-python.sh` | Loads **`data/credentials.csv`** for `AWS_*`, venv + `pip`, then runs **`get_secret_boto3.py`** and **`get_parameter_boto3.py`** |
+| `test/lambda_invoke_boto3.py` | **Python + boto3**: create container function, **invoke** (stdin/stdout round-trip), delete |
+| `test/test-aws-python.sh` | Loads **`data/credentials.csv`**, venv, runs **`get_secret_boto3.py`** and **`get_parameter_boto3.py`** |
+| `test/test-lambda-python.sh` | Same venv/credentials pattern; **`docker build`** then **`lambda_invoke_boto3.py`** |
+| `test/Dockerfile.lambda-smoke` | Minimal **`cat`** image used by the Lambda smoke tests (event on **stdin** → **stdout**) |
 | `server.json` | Listen address, optional **`dataPath`**, per-filename entries, and optional **`mapPath`** (host dir for `make run` → `/app` in Docker; ignored at runtime) |
 | `data/` | Example data directory (default **`mapPath`** in root `server.json`); `data/server.json` is used inside the container when that mount is in use |
 | `credentials.csv`, **`secrets.csv`**, `secrets.json`, **`parameters.csv`**, `parameters.json` | Data files; default next to the process unless **`dataPath`** in `server.json` moves them to one directory |
@@ -34,6 +41,8 @@ Run commands from the **repository root** so relative paths resolve.
 - **`secretsmanager`** — **`application/x-amz-json-1.1`**, **`X-Amz-Target`** (e.g. `secretsmanager.GetSecretValue` → `GetSecretValue`) → `internal/secretsmanager`.
 - **`ssm`** — same JSON 1.1 + **`X-Amz-Target`**. The AWS CLI sends targets like **`AmazonSSM.GetParameter`** while the SigV4 scope uses **`ssm`**; Twister treats those as the same product. Handling lives in `internal/ssm`.
 - **`s3`** — **REST** (not `X-Amz-Target`): e.g. **`PUT /bucket-name`** to create, **`DELETE /bucket-name`** to remove an empty bucket, with SigV4 scope **`s3`**, matching **`aws s3 mb` / `aws s3 rb`**.
+- **`sqs`** — SQS is **not** the same `POST` + `X-Amz-Target` path as JSON 1.1 secrets/ssm: the router branches on credential scope **`sqs`** to **`internal/sqs`** (form or JSON 1.0, depending on the client).
+- **`lambda`** — **JSON 1.1** + `X-Amz-Target` prefix **`Lambda_20150331`** (SigV4 scope must be **`lambda`**), implemented in **`internal/lambda`**. See **`docs/LAMBDA.md`**.
 
 Add another JSON 1.1 product by implementing `Service` and passing it to `awsserver.NewRouter` in `main`. Add S3–style behavior in `s3buckets` and route it from `awsserver.PrimaryHandler`. IAM stays on the form/query path in `internal/iam`.
 
@@ -59,9 +68,11 @@ On startup, Twister reads **`server.json`** (see below). If that file is missing
 - **`TWISTER_PARAMETERS_CSV`** — full path to the SSM parameters CSV (overrides `dataPath` + `parametersCSV` if set)
 - **`TWISTER_PARAMETERS_JSON`** — full path to the optional SSM parameters JSON overlay (overrides `dataPath` + `parametersFile` if set)
 - **`TWISTER_S3_DATA_PATH`** — absolute path to the directory that will contain **one subdirectory per S3 bucket** (overrides `dataPath` + `s3DataPath` when set). In Docker with the default layout, this is often `/app/buckets` (i.e. the host’s data dir + `buckets` when `dataPath` is `/app` and `s3DataPath` is `buckets`).
+- **`TWISTER_SQS_DATA_PATH`** — absolute path to the directory for **SQS** queue files (overrides `dataPath` + `sqsDataPath` when set; default basename **`sqs`**).
+- **`TWISTER_LAMBDA_DATA_PATH`** — absolute path to the **Lambda** registry and event–source mapping files (overrides `dataPath` + `lambdaDataPath` when set; default basename **`lambda`**). See **`docs/LAMBDA.md`**.
 - **`TWISTER_PID_FILE`** (or `SECRETS_LOCAL_PID_FILE`) — full path for the PID file (overrides `dataPath` + `pidFile` if set)
 
-**`dataPath`:** when non-empty, Twister places **`secrets.csv`**, **`parameters.csv`**, **`credentials.csv`**, **`secrets.json`**, **`parameters.json`**, and **`twister.log`** (basename only) under that directory, e.g. `dataPath: "/usr"` → `/usr/secrets.csv`, `/usr/credentials.csv`, etc. The `secretsCSV`, `parametersCSV`, `credentialsFile`, and other file keys still supply the **file name**; any directory in those strings is ignored when `dataPath` is set. When `dataPath` is empty, paths are relative to the current working directory (as before). Per-file env variables above, when set, are absolute paths and **do not** combine with `dataPath`. The **S3 bucket parent directory** is resolved the same way as other basenames: **`s3DataPath`** (default `buckets`) under `dataPath`, so with `dataPath: "/app"` you get `/app/buckets` for bucket folders.
+**`dataPath`:** when non-empty, Twister places **`secrets.csv`**, **`parameters.csv`**, **`credentials.csv`**, **`secrets.json`**, **`parameters.json`**, and **`twister.log`** (basename only) under that directory, e.g. `dataPath: "/usr"` → `/usr/secrets.csv`, `/usr/credentials.csv`, etc. The `secretsCSV`, `parametersCSV`, `credentialsFile`, and other file keys still supply the **file name**; any directory in those strings is ignored when `dataPath` is set. When `dataPath` is empty, paths are relative to the current working directory (as before). Per-file env variables above, when set, are absolute paths and **do not** combine with `dataPath`. The **S3 bucket parent directory** is resolved the same way as other basenames: **`s3DataPath`** (default `buckets`) under `dataPath`, so with `dataPath: "/app"` you get `/app/buckets` for bucket folders. **SQS** and **Lambda** on-disk data use the same pattern: **`sqsDataPath`** (default **`sqs`**) and **`lambdaDataPath`** (default **`lambda`**) as directory names under `dataPath` unless overridden by **`TWISTER_SQS_DATA_PATH`** / **`TWISTER_LAMBDA_DATA_PATH`**.
 
 Example `server.json`:
 
@@ -76,7 +87,9 @@ Example `server.json`:
   "parametersFile": "parameters.json",
   "credentialsFile": "credentials.csv",
   "pidFile": "twister.log",
-  "s3DataPath": "buckets"
+  "s3DataPath": "buckets",
+  "sqsDataPath": "sqs",
+  "lambdaDataPath": "lambda"
 }
 ```
 
@@ -94,7 +107,9 @@ Example with a system data root:
   "parametersFile": "parameters.json",
   "credentialsFile": "credentials.csv",
   "pidFile": "twister.log",
-  "s3DataPath": "buckets"
+  "s3DataPath": "buckets",
+  "sqsDataPath": "sqs",
+  "lambdaDataPath": "lambda"
 }
 ```
 
@@ -292,6 +307,13 @@ Object keys may use `/` (stored as subfolders under `buckets/<region>/<bucket>/`
 
 In **Docker**, mount your data directory to **`/app`**: the default bucket root is **`/app/buckets`** (or override with **`TWISTER_S3_DATA_PATH`**).
 
+### Lambda (Docker, `aws lambda`, SQS trigger)
+
+Twister can **create**, **invoke**, and **list** function definitions that point at **container images**; each invoke runs `docker run` with the event JSON on **stdin** and reads the result from **stdout** (not full AWS parity — see the doc).
+
+- **Full instructions:** **`docs/LAMBDA.md`** (docker CLI, `TWISTER_LAMBDA_DATA_PATH`, `create-function` / `invoke`, **event source mapping** for SQS, and the v1 “invoke after dequeue” behavior for **S3 → SQS → Lambda** style flows).
+- **Credential scope** for the CLI: **`lambda`**; **`X-Amz-Target`** uses the **`Lambda_20150331.***` prefix, like the real AWS API.
+
 ## Docker (Makefile)
 
 - **`make build`** — build the `twister` image.
@@ -307,13 +329,20 @@ make test
 
 Same as **`go test ./...`**.
 
+**Lambda (Docker) smoke tests** (with Twister already listening on **`:8080`**, and **`data/credentials.csv`** available for the Python wrapper):
+
+- **`test/test-lambda-cli.sh`** — uses the **AWS CLI** (`aws lambda`); needs **Docker** to build **`twister-lambda-smoke:local`**. If **`AWS_ACCESS_KEY_ID`** is unset, the script can load the first data row from **`data/credentials.csv`** (same idea as **`test/test-lambda-python.sh`**).
+- **`test/test-lambda-python.sh`** — creates/activates **`.venv`**, **`pip install -r test/requirements.txt`**, builds the smoke image, then runs **`test/lambda_invoke_boto3.py`**.
+
 ## Notes
 
 - **Secrets Manager:** **`secretsmanager.GetSecretValue`** and **`secretsmanager.CreateSecret`** (with `SecretString`; upsert by name) are implemented. Other `X-Amz-Target` values for that service return error-shaped JSON. Unregistered **service** names in `X-Amz-Target` are rejected.
 - **Parameter Store (SSM):** **`ssm.GetParameter`** and **`ssm.PutParameter`** are implemented for `String` / `StringList` / `SecureString` (with the `WithDecryption` rule above). Other SSM operations are not implemented yet.
 - **S3:** path-style **`PUT/GET/HEAD/DELETE`**: **CreateBucket** / **DeleteBucket** on `/{bucket}`; **PutObject** / **GetObject** / **DeleteObject** on `/{bucket}/{key}` (arbitrary `key` depth under **`s3DataPath`/`{region}`/`{bucket}`**). `GET`/`DELETE` a bucket name alone (list / empty delete semantics) is not fully modeled.
+- **SQS:** per-region queue JSON files; clients use credential scope **`sqs`**. S3 can enqueue **S3 event** payloads to a queue; see the repo’s SQS implementation for supported operations. Optional **SQS → Lambda** mapping: **`docs/LAMBDA.md`**.
+- **Lambda:** subset of the **`Lambda_20150331`** control/invoke API; **Docker** required on the host. See **`docs/LAMBDA.md`** and **`internal/lambda`**.
 - **IAM:** **`CreateAccessKey`** on the Query API (form body). The credential scope must be **`iam`**, not `secretsmanager` or `ssm`.
-- SigV4 checks use the per-service name in the credential scope (e.g. **`secretsmanager`**, **`ssm`**, **`iam`**), optional **±15 minute** clock skew on `X-Amz-Date`, and support for **`UNSIGNED-PAYLOAD`**, **empty** `X-Amz-Content-Sha256` (hashed body), or a **hex** content SHA256, matching common AWS CLI / SDK behavior. The scope’s service name must **match** the `X-Amz-Target` prefix.
+- SigV4 checks use the per-service name in the credential scope (e.g. **`secretsmanager`**, **`ssm`**, **`iam`**, **`lambda`**, plus **`s3`**, **`sqs`** for the respective wire paths), optional **±15 minute** clock skew on `X-Amz-Date`, and support for **`UNSIGNED-PAYLOAD`**, **empty** `X-Amz-Content-Sha256` (hashed body), or a **hex** content SHA256, matching common AWS CLI / SDK behavior. For **JSON 1.1** services, the scope’s service name must **match** the normalized `X-Amz-Target` prefix.
 
 ### Troubleshooting: `UnrecognizedClientException` / “security token … is invalid”
 

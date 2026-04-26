@@ -27,6 +27,8 @@ type Server struct {
 	S3DataPath string `json:"s3DataPath"`
 	// SQSDataPath is the directory (under dataPath) where per-region SQS queue JSON files are stored.
 	SQSDataPath string `json:"sqsDataPath"`
+	// LambdaDataPath is the directory (under dataPath) for Lambda function registry and event source mappings.
+	LambdaDataPath string `json:"lambdaDataPath"`
 }
 
 // Default is used when a config file is missing or a field is omitted/empty.
@@ -42,6 +44,7 @@ var Default = Server{
 	PIDFile:         "twister.log",
 	S3DataPath:      "buckets",
 	SQSDataPath:     "sqs",
+	LambdaDataPath:  "lambda",
 }
 
 // Load reads JSON from path. If the file does not exist, returns Default with a nil error.
@@ -89,6 +92,9 @@ func mergeServerDefaults(c *Server) {
 	}
 	if c.SQSDataPath == "" {
 		c.SQSDataPath = Default.SQSDataPath
+	}
+	if c.LambdaDataPath == "" {
+		c.LambdaDataPath = Default.LambdaDataPath
 	}
 }
 
