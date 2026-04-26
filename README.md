@@ -8,6 +8,7 @@ Run commands from the **repository root** so relative paths resolve.
 
 | Path | Purpose |
 |------|---------|
+| `AGENTS.md`, `CLAUDE.md`, `.cursor/skills/familiarize` | **AI agent onboarding** — read `.agents/familiarize/SKILL.md` first; Cursor exposes the same skill under `.cursor/skills/` |
 | `.agents/AI_CODING_GUIDE.md` | **Contributor & AI assistant guide** — project purpose, patterns, tests, when to update this README |
 | `docs/LAMBDA.md` | **Lambda** feature: Docker requirement, `lambdaDataPath` / **`TWISTER_LAMBDA_DATA_PATH`**, `aws lambda` CLI, SQS → Lambda (dequeue trigger) |
 | `cmd/twister/` | `main` — compose config, credentials, `awsserver` routes, and listen |
@@ -149,6 +150,8 @@ aws iam create-access-key \
   --endpoint-url http://localhost:8080 \
   --region us-east-1
 ```
+
+**Shortcut:** from the repo root, **`eval "$(make initial)"`** runs **`aws iam create-access-key`** against Twister (default **`http://localhost:8080`**; override **`TWISTER_ENDPOINT`**, **`PORT`**, or **`AWS_REGION`** in the Makefile / environment) and prints **`export AWS_ACCESS_KEY_ID=…`** and **`export AWS_SECRET_ACCESS_KEY=…`**, which **`eval`** applies to your current shell so the next CLI calls use the new pair.
 
 **First run with no `credentials.csv`:** run the same `aws iam create-access-key` with **`--endpoint-url`**; the local CLI profile can be any long-term key pair (they are not checked until after the first key is stored). The response is XML (`text/xml`) like the [CreateAccessKey](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateAccessKey.html) API. New keys work immediately for subsequent SigV4 calls because the in-memory allowlist is updated and the CSV on disk is replaced atomically.
 
@@ -319,6 +322,7 @@ Twister can **create**, **invoke**, and **list** function definitions that point
 - **`make build`** — build the `twister` image.
 - **`make run`** — start a **detached** container; the host path comes from the **`mapPath`** value in `server.json` (override which file to read with **`SERVER_JSON=path`**, e.g. `make run SERVER_JSON=server.json`). That path is mounted at **`/app`**; `TWISTER_DATA_PATH` in the image is `/app`. Use an absolute `mapPath` or a value relative to your shell’s current directory when you invoke `make` (e.g. **`data`** for `./data` when building from the repo root). Put **`server.json`**, `credentials.csv`, and other data files in that directory as needed (the repo’s **`data/server.json`** is a starting point).
 - **`make stop`** — stop running container(s) from this image.
+- **`make initial`** — call **`aws iam create-access-key`** on Twister and print **`export`** lines for the new key; use **`eval "$(make initial)"`** to set **`AWS_ACCESS_KEY_ID`** and **`AWS_SECRET_ACCESS_KEY`** in your shell (requires AWS CLI and a running Twister; see IAM section above for empty-allowlist behavior).
 - On SELinux (e.g. Fedora), the run recipe adds the volume **`:z`** flag so the mount is readable. Process `--user` matches your host `uid:gid` for file permissions; see the Makefile for details.
 
 ## Tests
