@@ -41,9 +41,16 @@ stop:
 
 # Create an access key on Twister and print exports. Load into your shell with:
 #   eval "$(make initial)"
-# Requires: running Twister, AWS CLI, and (for first key) empty allowlist or valid SigV4 per README.
+# Bootstrap flow: remove local credentials files, sign with temporary credentials,
+# refresh Twister state, then create a fresh access key pair on Twister.
+# Note: exports inside `make` do not affect your parent shell; this target prints
+# export commands so `eval "$(make initial)"` applies them to your current terminal.
 initial:
-	@out=$$(aws iam create-access-key \
+	@rm -f credentials.csv data/credentials.csv; \
+	curl -fsS -X POST "$(TWISTER_ENDPOINT)/refresh" >/dev/null; \
+	out=$$(AWS_ACCESS_KEY_ID=bootstrap-temp \
+		AWS_SECRET_ACCESS_KEY=bootstrap-temp \
+		aws iam create-access-key \
 		--endpoint-url "$(TWISTER_ENDPOINT)" \
 		--region "$${AWS_REGION:-us-east-1}" \
 		--query 'AccessKey.[AccessKeyId,SecretAccessKey]' \
