@@ -73,7 +73,7 @@ On startup, Twister reads **`server.json`** (see below). If that file is missing
 - **`TWISTER_LAMBDA_DATA_PATH`** — absolute path to the **Lambda** registry and event–source mapping files (overrides `dataPath` + `lambdaDataPath` when set; default basename **`lambda`**). See **`docs/LAMBDA.md`**.
 - **`TWISTER_PID_FILE`** (or `SECRETS_LOCAL_PID_FILE`) — full path for the PID file (overrides `dataPath` + `pidFile` if set)
 
-**`dataPath`:** when non-empty, Twister places **`secrets.csv`**, **`parameters.csv`**, **`credentials.csv`**, **`secrets.json`**, **`parameters.json`**, and **`twister.log`** (basename only) under that directory, e.g. `dataPath: "/usr"` → `/usr/secrets.csv`, `/usr/credentials.csv`, etc. The `secretsCSV`, `parametersCSV`, `credentialsFile`, and other file keys still supply the **file name**; any directory in those strings is ignored when `dataPath` is set. When `dataPath` is empty, paths are relative to the current working directory (as before). Per-file env variables above, when set, are absolute paths and **do not** combine with `dataPath`. The **S3 bucket parent directory** is resolved the same way as other basenames: **`s3DataPath`** (default `buckets`) under `dataPath`, so with `dataPath: "/app"` you get `/app/buckets` for bucket folders. **SQS** and **Lambda** on-disk data use the same pattern: **`sqsDataPath`** (default **`sqs`**) and **`lambdaDataPath`** (default **`lambda`**) as directory names under `dataPath` unless overridden by **`TWISTER_SQS_DATA_PATH`** / **`TWISTER_LAMBDA_DATA_PATH`**.
+**`dataPath`:** when non-empty, Twister places **`secrets.csv`**, **`parameters.csv`**, **`credentials.csv`**, **`secrets.json`**, **`parameters.json`**, and **`twister.log`** (basename only) under that directory, e.g. `dataPath: "/usr"` → `/usr/secrets.csv`, `/usr/credentials.csv`, etc. The `secretsCSV`, `parametersCSV`, `credentialsFile`, and other file keys still supply the **file name**; any directory in those strings is ignored when `dataPath` is set. When `dataPath` is empty, paths are relative to the current working directory (as before). Per-file env variables above, when set, are absolute paths and **do not** combine with `dataPath`. The **S3 bucket parent directory** is resolved the same way as other basenames: **`s3DataPath`** (default `buckets`) under `dataPath`, so with `dataPath: "/app"` you get `/app/buckets` for bucket folders. **SQS** and **Lambda** on-disk data use the same pattern: **`sqsDataPath`** (default **`sqs`**) and **`lambdaDataPath`** (default **`lambda`**) as directory names under `dataPath` unless overridden by **`TWISTER_SQS_DATA_PATH`** / **`TWISTER_LAMBDA_DATA_PATH`**. **`s3MaxPutBodyBytes`** controls max accepted S3 object size for `PUT`; when omitted or non-positive, Twister uses **16777216 (16 MiB)**, and values above **2000000000** are rejected at startup.
 
 Example `server.json`:
 
@@ -89,6 +89,7 @@ Example `server.json`:
   "credentialsFile": "credentials.csv",
   "pidFile": "twister.log",
   "s3DataPath": "buckets",
+  "s3MaxPutBodyBytes": 16777216,
   "sqsDataPath": "sqs",
   "lambdaDataPath": "lambda"
 }
@@ -109,6 +110,7 @@ Example with a system data root:
   "credentialsFile": "credentials.csv",
   "pidFile": "twister.log",
   "s3DataPath": "buckets",
+  "s3MaxPutBodyBytes": 16777216,
   "sqsDataPath": "sqs",
   "lambdaDataPath": "lambda"
 }

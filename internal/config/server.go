@@ -2,17 +2,20 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+const MaxS3PutBodyBytesLimit int64 = 2_000_000_000
 
 // Server holds paths and listen settings for the Twister process.
 // Empty fields in JSON are filled with defaults after load.
 type Server struct {
 	// DataPath, if set, is the root directory for all on-disk data files (secrets, parameters, IAM CSV, optional JSON, PID log).
 	// File entries below are always resolved as DataPath + basename (e.g. /var/lib/twister/secrets.csv); empty DataPath uses cwd via JoinDot.
-	DataPath        string `json:"dataPath"`
+	DataPath string `json:"dataPath"`
 	// MapPath is the **host** directory bound to /app in the container when using `make run` (Docker).
 	// The Twister binary does not read this field; it is for tooling only. Not combined with dataPath.
 	MapPath         string `json:"mapPath"`
@@ -29,22 +32,26 @@ type Server struct {
 	SQSDataPath string `json:"sqsDataPath"`
 	// LambdaDataPath is the directory (under dataPath) for Lambda function registry and event source mappings.
 	LambdaDataPath string `json:"lambdaDataPath"`
+	// S3MaxPutBodyBytes limits accepted S3 PUT object size in bytes.
+	// Zero or negative uses the server default.
+	S3MaxPutBodyBytes int64 `json:"s3MaxPutBodyBytes"`
 }
 
 // Default is used when a config file is missing or a field is omitted/empty.
 var Default = Server{
-	DataPath:        "",
-	MapPath:         "",
-	ListenAddress:   ":8080",
-	SecretsCSV:      "secrets.csv",
-	SecretsFile:     "secrets.json",
-	ParametersCSV:   "parameters.csv",
-	ParametersFile:  "parameters.json",
-	CredentialsFile: "credentials.csv",
-	PIDFile:         "twister.log",
-	S3DataPath:      "buckets",
-	SQSDataPath:     "sqs",
-	LambdaDataPath:  "lambda",
+	DataPath:          "",
+	MapPath:           "",
+	ListenAddress:     ":8080",
+	SecretsCSV:        "secrets.csv",
+	SecretsFile:       "secrets.json",
+	ParametersCSV:     "parameters.csv",
+	ParametersFile:    "parameters.json",
+	CredentialsFile:   "credentials.csv",
+	PIDFile:           "twister.log",
+	S3DataPath:        "buckets",
+	SQSDataPath:       "sqs",
+	LambdaDataPath:    "lambda",
+	S3MaxPutBodyBytes: 0,
 }
 
 // Load reads JSON from path. If the file does not exist, returns Default with a nil error.
@@ -62,6 +69,9 @@ func Load(path string) (Server, error) {
 		return Server{}, err
 	}
 	mergeServerDefaults(&c)
+	if c.S3MaxPutBodyBytes > MaxS3PutBodyBytesLimit {
+		return Server{}, fmt.Errorf("invalid s3MaxPutBodyBytes %d: must be <= %d", c.S3MaxPutBodyBytes, MaxS3PutBodyBytesLimit)
+	}
 	return c, nil
 }
 

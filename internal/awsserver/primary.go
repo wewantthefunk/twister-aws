@@ -2,6 +2,7 @@ package awsserver
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -11,11 +12,23 @@ import (
 	"github.com/christian/twister/internal/s3buckets"
 )
 
+const defaultMaxS3PutBodyBytes int64 = 16 << 20 // 16 MiB
+
 // PrimaryHandler routes S3 path-style REST (GET/HEAD/PUT/DELETE /bucket/...) before the JSON 1.1 POST / handler.
 type PrimaryHandler struct {
 	Provider *credentials.Provider
 	S3       *s3buckets.Manager
 	API      http.Handler
+	// MaxS3PutBodyBytes sets the max object size accepted by S3 PUT.
+	// Zero or negative uses defaultMaxS3PutBodyBytes.
+	MaxS3PutBodyBytes int64
+}
+
+func (h *PrimaryHandler) maxS3PutBodyBytes() int64 {
+	if h == nil || h.MaxS3PutBodyBytes <= 0 {
+		return defaultMaxS3PutBodyBytes
+	}
+	return h.MaxS3PutBodyBytes
 }
 
 // ServeHTTP dispatches: S3 REST; POST / to JSON 1.1; other methods as appropriate.
@@ -39,9 +52,19 @@ func (h *PrimaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var putBody []byte
 		var err error
 		if r.Method == http.MethodPut {
-			putBody, err = io.ReadAll(io.LimitReader(r.Body, MaxBodyBytes))
+			maxBytes := h.maxS3PutBodyBytes()
+			putBody, err = io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
 			if err != nil {
 				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+			if int64(len(putBody)) > maxBytes {
+				s3buckets.WriteRESTError(
+					w,
+					http.StatusBadRequest,
+					"EntityTooLarge",
+					fmt.Sprintf("Your proposed upload exceeds the maximum allowed object size (%d bytes).", maxBytes),
+				)
 				return
 			}
 		} else {

@@ -19,3 +19,20 @@ func TestIsS3RESTPath(t *testing.T) {
 		t.Fatal("empty")
 	}
 }
+
+func TestPrimaryHandlerMaxS3PutBodyBytes(t *testing.T) {
+	var nilHandler *PrimaryHandler
+	if got := nilHandler.maxS3PutBodyBytes(); got != defaultMaxS3PutBodyBytes {
+		t.Fatalf("nil handler: got %d want %d", got, defaultMaxS3PutBodyBytes)
+	}
+
+	h := &PrimaryHandler{}
+	if got := h.maxS3PutBodyBytes(); got != defaultMaxS3PutBodyBytes {
+		t.Fatalf("zero override: got %d want %d", got, defaultMaxS3PutBodyBytes)
+	}
+
+	h.MaxS3PutBodyBytes = 2 << 20
+	if got := h.maxS3PutBodyBytes(); got != 2<<20 {
+		t.Fatalf("custom override: got %d want %d", got, 2<<20)
+	}
+}

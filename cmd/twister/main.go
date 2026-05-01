@@ -134,7 +134,12 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", awsserver.Health)
 	mux.HandleFunc("/refresh", ref.Refresh)
-	mux.Handle("/", &awsserver.PrimaryHandler{Provider: provider, S3: s3mgr, API: router})
+	mux.Handle("/", &awsserver.PrimaryHandler{
+		Provider:          provider,
+		S3:                s3mgr,
+		API:               router,
+		MaxS3PutBodyBytes: cfg.S3MaxPutBodyBytes,
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddress,
