@@ -11,5 +11,7 @@
   "s3DataPath": "buckets",
   "s3MaxPutBodyBytes": 16777216,
   "sqsDataPath": "sqs",
-  "lambdaDataPath": "lambda"
+  "lambdaDataPath": "lambda",
+  "ec2DataPath": "ec2",
+  "ec2AmiCatalog": "ec2-ami-catalog.json"
 }

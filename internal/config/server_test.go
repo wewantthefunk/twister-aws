@@ -48,6 +48,12 @@ func TestLoad_partialMergesDefaults(t *testing.T) {
 	if c.S3MaxPutBodyBytes != Default.S3MaxPutBodyBytes {
 		t.Fatalf("s3MaxPutBodyBytes default: %#v", c)
 	}
+	if c.EC2DataPath != Default.EC2DataPath {
+		t.Fatalf("ec2DataPath default: %#v", c)
+	}
+	if c.EC2AmiCatalog != Default.EC2AmiCatalog {
+		t.Fatalf("ec2AmiCatalog default: %#v", c)
+	}
 }
 
 func TestLoad_mapPath_preserved(t *testing.T) {

@@ -32,9 +32,14 @@ go.work.sum
 *.log
 *.csv
 *.pid
+*.pem
 
 data/server.json
 data/buckets/
 data/sqs/
+data/lambda/
+data/ec2/
+data/dns-zones.json
+
 
 __pycache__/

@@ -2,6 +2,10 @@
 
 Twister exposes a **subset** of the AWS Lambda control and invoke API (JSON 1.1, `X-Amz-Target` `Lambda_20150331.*`) with **SigV4** signing, the same way as Secrets Manager and SSM. Functions are **Docker images** you provide; Twister runs `docker run --rm -i` per invocation.
 
+## Twister inside Docker
+
+The Twister container image includes the **Docker CLI** (client). Use **one** host daemon: **`make run`** bind-mounts **`DOCKER_SOCK`** when that path exists as a socket (default **`/var/run/docker.sock`**; **`make run DOCKER_SOCK=`** skips). The recipe adds **`--group-add`** from the socket’s group when possible. Or mount manually. The CLI then talks to the **host** engine; that is not nested **Docker-in-Docker** unless you intentionally run a daemon inside the container.
+
 ## Requirements
 
 - **Docker Engine** available to the Twister process: the `docker` CLI on `PATH`, or set `DOCKER_HOST` if the daemon is remote.

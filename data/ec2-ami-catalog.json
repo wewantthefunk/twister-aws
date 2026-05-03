@@ -1,0 +1,9 @@
+{
+    "amis": {
+      "ami-0abc123def456": {
+        "dockerImage": "busybox:latest",
+        "command": ["sleep", "3600"],
+        "defaultUser": "root"
+      }
+    }
+  }

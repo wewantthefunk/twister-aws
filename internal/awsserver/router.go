@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/christian/twister/internal/credentials"
+	"github.com/christian/twister/internal/ec2"
 	"github.com/christian/twister/internal/iam"
 	"github.com/christian/twister/internal/sqs"
 )
@@ -31,6 +32,8 @@ type Router struct {
 	IAM      *iam.Service
 	// SQS is the SQS Query API (form POST) when the credential scope service is "sqs". If nil, requests are rejected.
 	SQS *sqs.Service
+	// EC2 is the EC2 Query API (form POST) when the credential scope service is "ec2". If nil, requests are rejected.
+	EC2 *ec2.Service
 	services map[string]Service
 }
 
@@ -75,7 +78,7 @@ func canonicalJSONServiceName(s string) string {
 	}
 }
 
-// ServeHTTP implements the AWS “single endpoint” pattern: POST / with X-Amz-Target.
+// ServeHTTP implements the AWS “single endpoint” pattern: POST / with SigV4; JSON 1.1 services use X-Amz-Target, IAM/EC2/SQS use the Query API (form body).
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -132,6 +135,17 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if signingService == "ec2" {
+		if rt.EC2 == nil {
+			http.Error(w, "ec2 service not configured", http.StatusServiceUnavailable)
+			return
+		}
+		ctx := r.Context()
+		ctx = WithSigningRegion(ctx, region)
+		rt.EC2.Handle(w, r.WithContext(ctx), region, body, rid)
+		return
+	}
+
 	if !RequireJSONContentType(w, r.Header.Get("Content-Type")) {
 		return
 	}
@@ -168,7 +182,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if canonSign != "secretsmanager" && canonSign != "ssm" && canonSign != "lambda" {
 		WriteJSON(w, http.StatusBadRequest, ErrorResponse{
 			Type:    "InvalidRequestException",
-			Message: fmt.Sprintf("unexpected signing service in credential scope: %q (expected secretsmanager, ssm, lambda, or use sqs/iam for query APIs)", signingService),
+			Message: fmt.Sprintf("unexpected signing service in credential scope: %q (expected secretsmanager, ssm, lambda, or use sqs/iam/ec2 for query APIs)", signingService),
 		})
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/christian/twister/internal/credentials"
+	"github.com/christian/twister/internal/ec2"
 	"github.com/christian/twister/internal/paramstore"
 	"github.com/christian/twister/internal/secretstore"
 )
@@ -19,6 +20,8 @@ type Refresher struct {
 	ParamStore         *paramstore.Store
 	ParametersCSVPath  string
 	ParametersJSONPath string
+	// EC2, if set, reloads EC2 state.json on /refresh.
+	EC2 *ec2.Service
 }
 
 // RefreshResponse is returned as JSON on success.
@@ -56,6 +59,12 @@ func (rf *Refresher) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	if rf.ParamStore != nil {
 		if err := rf.ParamStore.ReloadFromFiles(rf.ParametersCSVPath, rf.ParametersJSONPath); err != nil {
+			WriteJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": err.Error()})
+			return
+		}
+	}
+	if rf.EC2 != nil {
+		if err := rf.EC2.ReloadState(); err != nil {
 			WriteJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": err.Error()})
 			return
 		}

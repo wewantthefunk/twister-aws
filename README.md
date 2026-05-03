@@ -1,6 +1,6 @@
 # Twister
 
-**Twister** is a single HTTP service that aims to be a **drop-in replacement for AWS APIs** at the wire level: point the AWS SDK or CLI at Twister with `--endpoint-url` and the same `X-Amz-Target` / JSON 1.1 / SigV4 contracts (and **S3**–style **REST** for buckets). Implemented surfaces include **Secrets Manager**, **SSM Parameter Store**, path-style **S3 bucket** create/delete, **SQS** (query / JSON to `POST /`), a **Lambda**-compatible **control and invoke** API (Docker-backed; see **`docs/LAMBDA.md`**) and optional **S3 → SQS** event notifications. Each S3 bucket is a **folder** under a configurable root, e.g. `buckets/` inside your mounted data volume in Docker.
+**Twister** is a single HTTP service that aims to be a **drop-in replacement for AWS APIs** at the wire level: point the AWS SDK or CLI at Twister with `--endpoint-url` and the same `X-Amz-Target` / JSON 1.1 / SigV4 contracts (and **S3**–style **REST** for buckets). Implemented surfaces include **Secrets Manager**, **SSM Parameter Store**, path-style **S3 bucket** create/delete, **SQS** (query / JSON to `POST /`), a **Lambda**-compatible **control and invoke** API (Docker-backed; see **`docs/LAMBDA.md`**), a minimal **EC2** Query API (XML, Docker-backed `run-instances`; see § **EC2 emulation** below), and optional **S3 → SQS** event notifications. Each S3 bucket is a **folder** under a configurable root, e.g. `buckets/` inside your mounted data volume in Docker.
 
 ## Layout
 
@@ -12,10 +12,11 @@ Run commands from the **repository root** so relative paths resolve.
 | `.agents/AI_CODING_GUIDE.md` | **Contributor & AI assistant guide** — project purpose, patterns, tests, when to update this README |
 | `docs/LAMBDA.md` | **Lambda** feature: Docker requirement, `lambdaDataPath` / **`TWISTER_LAMBDA_DATA_PATH`**, `aws lambda` CLI, SQS → Lambda (dequeue trigger) |
 | `cmd/twister/` | `main` — compose config, credentials, `awsserver` routes, and listen |
-| `internal/awsserver/` | **SigV4**; `PrimaryHandler` routes **S3** `GET`/`HEAD`/`PUT`/`DELETE` on `/bucket/...`, then `POST /` to JSON **1.1** or IAM |
+| `internal/awsserver/` | **SigV4**; `PrimaryHandler` routes **S3** `GET`/`HEAD`/`PUT`/`DELETE` on `/bucket/...`, then `POST /` to JSON **1.1**, **IAM/EC2/SQS** form APIs, or **Lambda** |
 | `internal/s3buckets/` | **S3** bucket operations as directories under **`s3DataPath`** (default **`buckets`**) |
 | `internal/sqs/` | **SQS** queue files under **`sqsDataPath`** (default **`sqs`**) and optional post-dequeue hook to **`internal/lambda`** |
 | `internal/lambda/` | **Lambda** JSON 1.1 API subset (`lambda` / **`Lambda_20150331`**) — registry on disk, **Docker** `run` per invoke |
+| `internal/ec2/` | **EC2** Query API subset (SigV4 scope **`ec2`**, form POST, XML) — VPC/subnet/SG/keypair state on disk; **`RunInstances`** uses **Docker** + **`ec2-ami-catalog.json`** |
 | `internal/iam/` | **IAM** Query API subset (`CreateAccessKey` → XML), persists to **`credentials.csv`** |
 | `internal/credentials/` | CSV allowlist + **`Provider`** (`VerifyRequest` / SigV4, `AddAccessKeyAndPersist`) |
 | `internal/sigv4/` | SigV4 crypto (used by `credentials`) |
@@ -44,13 +45,14 @@ Run commands from the **repository root** so relative paths resolve.
 - **`s3`** — **REST** (not `X-Amz-Target`): e.g. **`PUT /bucket-name`** to create, **`DELETE /bucket-name`** to remove an empty bucket, with SigV4 scope **`s3`**, matching **`aws s3 mb` / `aws s3 rb`**.
 - **`sqs`** — SQS is **not** the same `POST` + `X-Amz-Target` path as JSON 1.1 secrets/ssm: the router branches on credential scope **`sqs`** to **`internal/sqs`** (form or JSON 1.0, depending on the client).
 - **`lambda`** — **JSON 1.1** + `X-Amz-Target` prefix **`Lambda_20150331`** (SigV4 scope must be **`lambda`**), implemented in **`internal/lambda`**. See **`docs/LAMBDA.md`**.
+- **`ec2`** — **EC2** is the same **form-encoded** path as IAM/SQS (no `X-Amz-Target`): the router dispatches credential scope **`ec2`** to **`internal/ec2`**. Version **`2016-11-15`** is accepted. See § **EC2 emulation** below.
 
-Add another JSON 1.1 product by implementing `Service` and passing it to `awsserver.NewRouter` in `main`. Add S3–style behavior in `s3buckets` and route it from `awsserver.PrimaryHandler`. IAM stays on the form/query path in `internal/iam`.
+Add another JSON 1.1 product by implementing `Service` and passing it to `awsserver.NewRouter` in `main`. Add S3–style behavior in `s3buckets` and route it from `awsserver.PrimaryHandler`. IAM and EC2 stay on the form/query path.
 
 ### Admin HTTP routes (not AWS)
 
 - **`GET` / **`HEAD` `/health`** — liveness; **`200`** with body `ok` (plain text).
-- **`GET` / **`POST` `/refresh`** — reread **`credentials.csv`**, **`secrets.csv`**, **`secrets.json`**, **`parameters.csv`**, and **`parameters.json`** from the same resolved paths as process startup (including `TWISTER_*` overrides), clear in-memory state, reload, then apply **seed defaults** for demo secret names that have no row in any region (same order as startup). Response is JSON: `ok`, `accessKeys`, `secrets`, `parameters`, and the paths used. **Not authenticated** — only use on trusted networks or protect with a reverse proxy / firewall.
+- **`GET` / **`POST` `/refresh`** — reread **`credentials.csv`**, **`secrets.csv`**, **`secrets.json`**, **`parameters.csv`**, and **`parameters.json`** from the same resolved paths as process startup (including `TWISTER_*` overrides), clear in-memory state, reload, then apply **seed defaults** for demo secret names that have no row in any region (same order as startup). Also reloads **`internal/ec2`** **`state.json`** when EC2 is enabled. Response is JSON: `ok`, `accessKeys`, `secrets`, `parameters`, and the paths used. **Not authenticated** — only use on trusted networks or protect with a reverse proxy / firewall.
 
 ## Run
 
@@ -71,9 +73,12 @@ On startup, Twister reads **`server.json`** (see below). If that file is missing
 - **`TWISTER_S3_DATA_PATH`** — absolute path to the directory that will contain **one subdirectory per S3 bucket** (overrides `dataPath` + `s3DataPath` when set). In Docker with the default layout, this is often `/app/buckets` (i.e. the host’s data dir + `buckets` when `dataPath` is `/app` and `s3DataPath` is `buckets`).
 - **`TWISTER_SQS_DATA_PATH`** — absolute path to the directory for **SQS** queue files (overrides `dataPath` + `sqsDataPath` when set; default basename **`sqs`**).
 - **`TWISTER_LAMBDA_DATA_PATH`** — absolute path to the **Lambda** registry and event–source mapping files (overrides `dataPath` + `lambdaDataPath` when set; default basename **`lambda`**). See **`docs/LAMBDA.md`**.
+- **`TWISTER_EC2_DATA_PATH`** — absolute path to the **EC2** data directory (overrides `dataPath` + `ec2DataPath`; default basename **`ec2`**). Holds **`state.json`**.
+- **`TWISTER_EC2_AMI_CATALOG`** — absolute path to the **AMI catalog** JSON (overrides `dataPath` + **`ec2AmiCatalog`**; default basename **`ec2-ami-catalog.json`**). Maps `ImageId` strings to Docker images for **`run-instances`**.
+- **`TWISTER_EC2_PUBLIC_HOST`** — hostname or IP Twister reports as **`publicIpAddress`** on instances (for **`describe-instances`** / CLI `--query`). Default **`127.0.0.1`** when unset.
 - **`TWISTER_PID_FILE`** (or `SECRETS_LOCAL_PID_FILE`) — full path for the PID file (overrides `dataPath` + `pidFile` if set)
 
-**`dataPath`:** when non-empty, Twister places **`secrets.csv`**, **`parameters.csv`**, **`credentials.csv`**, **`secrets.json`**, **`parameters.json`**, and **`twister.log`** (basename only) under that directory, e.g. `dataPath: "/usr"` → `/usr/secrets.csv`, `/usr/credentials.csv`, etc. The `secretsCSV`, `parametersCSV`, `credentialsFile`, and other file keys still supply the **file name**; any directory in those strings is ignored when `dataPath` is set. When `dataPath` is empty, paths are relative to the current working directory (as before). Per-file env variables above, when set, are absolute paths and **do not** combine with `dataPath`. The **S3 bucket parent directory** is resolved the same way as other basenames: **`s3DataPath`** (default `buckets`) under `dataPath`, so with `dataPath: "/app"` you get `/app/buckets` for bucket folders. **SQS** and **Lambda** on-disk data use the same pattern: **`sqsDataPath`** (default **`sqs`**) and **`lambdaDataPath`** (default **`lambda`**) as directory names under `dataPath` unless overridden by **`TWISTER_SQS_DATA_PATH`** / **`TWISTER_LAMBDA_DATA_PATH`**. **`s3MaxPutBodyBytes`** controls max accepted S3 object size for `PUT`; when omitted or non-positive, Twister uses **16777216 (16 MiB)**, and values above **2000000000** are rejected at startup.
+**`dataPath`:** when non-empty, Twister places **`secrets.csv`**, **`parameters.csv`**, **`credentials.csv`**, **`secrets.json`**, **`parameters.json`**, and **`twister.log`** (basename only) under that directory, e.g. `dataPath: "/usr"` → `/usr/secrets.csv`, `/usr/credentials.csv`, etc. The `secretsCSV`, `parametersCSV`, `credentialsFile`, and other file keys still supply the **file name**; any directory in those strings is ignored when `dataPath` is set. When `dataPath` is empty, paths are relative to the current working directory (as before). Per-file env variables above, when set, are absolute paths and **do not** combine with `dataPath`. The **S3 bucket parent directory** is resolved the same way as other basenames: **`s3DataPath`** (default `buckets`) under `dataPath`, so with `dataPath: "/app"` you get `/app/buckets` for bucket folders. **SQS**, **Lambda**, and **EC2** on-disk data use the same pattern: **`sqsDataPath`** (default **`sqs`**), **`lambdaDataPath`** (default **`lambda`**), **`ec2DataPath`** (default **`ec2`**) as directory names under `dataPath` unless overridden by **`TWISTER_SQS_DATA_PATH`** / **`TWISTER_LAMBDA_DATA_PATH`** / **`TWISTER_EC2_DATA_PATH`**. The **AMI catalog** file defaults to **`ec2AmiCatalog`** (**`ec2-ami-catalog.json`**) under `dataPath`, overridable with **`TWISTER_EC2_AMI_CATALOG`**. **`s3MaxPutBodyBytes`** controls max accepted S3 object size for `PUT`; when omitted or non-positive, Twister uses **16777216 (16 MiB)**, and values above **2000000000** are rejected at startup.
 
 Example `server.json`:
 
@@ -91,7 +96,9 @@ Example `server.json`:
   "s3DataPath": "buckets",
   "s3MaxPutBodyBytes": 16777216,
   "sqsDataPath": "sqs",
-  "lambdaDataPath": "lambda"
+  "lambdaDataPath": "lambda",
+  "ec2DataPath": "ec2",
+  "ec2AmiCatalog": "ec2-ami-catalog.json"
 }
 ```
 
@@ -112,7 +119,9 @@ Example with a system data root:
   "s3DataPath": "buckets",
   "s3MaxPutBodyBytes": 16777216,
   "sqsDataPath": "sqs",
-  "lambdaDataPath": "lambda"
+  "lambdaDataPath": "lambda",
+  "ec2DataPath": "ec2",
+  "ec2AmiCatalog": "ec2-ami-catalog.json"
 }
 ```
 
@@ -156,6 +165,56 @@ aws iam create-access-key \
 **Shortcut:** from the repo root, **`eval "$(make initial)"`** runs **`aws iam create-access-key`** against Twister (default **`http://localhost:8080`**; override **`TWISTER_ENDPOINT`**, **`PORT`**, or **`AWS_REGION`** in the Makefile / environment) and prints **`export AWS_ACCESS_KEY_ID=…`** and **`export AWS_SECRET_ACCESS_KEY=…`**, which **`eval`** applies to your current shell so the next CLI calls use the new pair.
 
 **First run with no `credentials.csv`:** run the same `aws iam create-access-key` with **`--endpoint-url`**; the local CLI profile can be any long-term key pair (they are not checked until after the first key is stored). The response is XML (`text/xml`) like the [CreateAccessKey](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateAccessKey.html) API. New keys work immediately for subsequent SigV4 calls because the in-memory allowlist is updated and the CSV on disk is replaced atomically.
+
+### EC2 emulation (Docker-backed)
+
+Twister implements a **small** subset of the **EC2 Query API** (form body, XML responses, SigV4 credential scope **`ec2`**). It does **not** use `X-Amz-Target`. Operations use the **`docker`** CLI (`pull`, `run`, `stop`, `rm`).
+
+**Twister inside Docker:** the image ships the **Docker CLI** only, not a second daemon. That avoids classic **Docker-in-Docker**: **`make run`** bind-mounts the host **`DOCKER_SOCK`** when it exists as a socket (default **`/var/run/docker.sock`**; override the path or use **`make run DOCKER_SOCK=`** to skip the mount). The Makefile also adds **`--group-add`** with the socket’s gid when it can detect it (Linux/macOS **`stat`**), so the non-root **`twister`** user can talk to the daemon. Or set **`DOCKER_HOST`** explicitly, or run Twister on the host with **`go run ./cmd/twister`**.
+
+**State** lives under **`ec2DataPath`** (default directory **`ec2`** under `dataPath`): **`state.json`** for VPCs, subnets, security groups, key pair metadata, instances.
+
+**AMI catalog** — JSON file (default **`ec2-ami-catalog.json`** next to other data files), overridable with **`TWISTER_EC2_AMI_CATALOG`**:
+
+```json
+{
+  "amis": {
+    "ami-0localtest": {
+      "dockerImage": "busybox:latest",
+      "command": ["sleep", "3600"],
+      "defaultUser": "root"
+    }
+  }
+}
+```
+
+Unknown **`ImageId`** returns **`InvalidAMIID.NotFound`**.
+
+**Supported actions (MVP):** `CreateKeyPair`, `CreateVpc`, `CreateSubnet`, `DescribeVpcs`, `DescribeSubnets`, `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `DescribeSecurityGroups`, `RunInstances` (single instance: **`MinCount`** = **`MaxCount`** = **1**), `DescribeInstances` (including filters **`instance-state-name`**, **`tag:Name`**, **`resource-id`**), `StopInstances`, `StartInstances`, `TerminateInstances`.
+
+**Security group → ports:** for **`RunInstances`**, **TCP** rules where **`FromPort`** = **`ToPort`** > 0 become **`docker run -p <port>:<port>`** (host publishes all interfaces). Other protocols and **`-1`** are ignored for publishing.
+
+**Addressing:** instances get a fixed private IP placeholder in XML; **`publicIpAddress`** is **`TWISTER_EC2_PUBLIC_HOST`** or **`127.0.0.1`**.
+
+**Not modeled:** ENIs, IGW, EBS, user-data, IMDS, full EC2 error catalog, multi-instance launch, real SSH into guests.
+
+Example (after credentials match `credentials.csv`; use your VPC/subnet/SG IDs from **`create-*`** / **`describe-*`**):
+
+```bash
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+EP=http://localhost:8080
+REG=us-east-1
+
+aws ec2 create-key-pair --endpoint-url "$EP" --region "$REG" --key-name demo-key
+# ... create vpc, subnet, security group, authorize ingress ...
+
+aws ec2 run-instances --endpoint-url "$EP" --region "$REG" \
+  --image-id ami-0localtest --subnet-id subnet-... --security-group-ids sg-... --key-name demo-key
+
+aws ec2 describe-instances --endpoint-url "$EP" --region "$REG" \
+  --query 'Reservations[].Instances[].PublicIpAddress' --output text
+```
 
 ### Secret values (Secrets Manager data plane, durable)
 
@@ -322,7 +381,7 @@ Twister can **create**, **invoke**, and **list** function definitions that point
 ## Docker (Makefile)
 
 - **`make build`** — build the `twister` image.
-- **`make run`** — start a **detached** container; the host path comes from the **`mapPath`** value in `server.json` (override which file to read with **`SERVER_JSON=path`**, e.g. `make run SERVER_JSON=server.json`). That path is mounted at **`/app`**; `TWISTER_DATA_PATH` in the image is `/app`. Use an absolute `mapPath` or a value relative to your shell’s current directory when you invoke `make` (e.g. **`data`** for `./data` when building from the repo root). Put **`server.json`**, `credentials.csv`, and other data files in that directory as needed (the repo’s **`data/server.json`** is a starting point).
+- **`make run`** — start a **detached** container; the host path comes from the **`mapPath`** value in `server.json` (override which file to read with **`SERVER_JSON=path`**, e.g. `make run SERVER_JSON=server.json`). That path is mounted at **`/app`**; `TWISTER_DATA_PATH` in the image is `/app`. Use an absolute `mapPath` or a value relative to your shell’s current directory when you invoke `make` (e.g. **`data`** for `./data` when building from the repo root). Put **`server.json`**, `credentials.csv`, and other data files in that directory as needed (the repo’s **`data/server.json`** is a starting point). For **EC2** / **Lambda**, **`make run`** **auto-mounts** the host Docker socket when **`DOCKER_SOCK`** (default **`/var/run/docker.sock`**) exists; use **`make run DOCKER_SOCK=`** to skip (see § **EC2 emulation**).
 - **`make stop`** — stop running container(s) from this image.
 - **`make initial`** — call **`aws iam create-access-key`** on Twister and print **`export`** lines for the new key; use **`eval "$(make initial)"`** to set **`AWS_ACCESS_KEY_ID`** and **`AWS_SECRET_ACCESS_KEY`** in your shell (requires AWS CLI and a running Twister; see IAM section above for empty-allowlist behavior).
 - On SELinux (e.g. Fedora), the run recipe adds the volume **`:z`** flag so the mount is readable. Process `--user` matches your host `uid:gid` for file permissions; see the Makefile for details.
