@@ -156,7 +156,7 @@ func parseCredentialScope(credential string) (accessKey, dateStamp, region, serv
 
 func isAllowedSigningService(s string) bool {
 	switch s {
-	case "secretsmanager", "iam", "ssm", "s3", "sqs", "lambda":
+	case "secretsmanager", "iam", "ssm", "s3", "sqs", "lambda", "ec2":
 		return true
 	default:
 		return false

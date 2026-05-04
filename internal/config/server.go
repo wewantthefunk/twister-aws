@@ -32,6 +32,10 @@ type Server struct {
 	SQSDataPath string `json:"sqsDataPath"`
 	// LambdaDataPath is the directory (under dataPath) for Lambda function registry and event source mappings.
 	LambdaDataPath string `json:"lambdaDataPath"`
+	// EC2DataPath is the directory basename (under dataPath) for EC2 emulation state (state.json).
+	EC2DataPath string `json:"ec2DataPath"`
+	// EC2AmiCatalog is the JSON file basename (under dataPath) mapping AMI IDs to Docker images.
+	EC2AmiCatalog string `json:"ec2AmiCatalog"`
 	// S3MaxPutBodyBytes limits accepted S3 PUT object size in bytes.
 	// Zero or negative uses the server default.
 	S3MaxPutBodyBytes int64 `json:"s3MaxPutBodyBytes"`
@@ -51,6 +55,8 @@ var Default = Server{
 	S3DataPath:        "buckets",
 	SQSDataPath:       "sqs",
 	LambdaDataPath:    "lambda",
+	EC2DataPath:       "ec2",
+	EC2AmiCatalog:     "ec2-ami-catalog.json",
 	S3MaxPutBodyBytes: 0,
 }
 
@@ -105,6 +111,12 @@ func mergeServerDefaults(c *Server) {
 	}
 	if c.LambdaDataPath == "" {
 		c.LambdaDataPath = Default.LambdaDataPath
+	}
+	if c.EC2DataPath == "" {
+		c.EC2DataPath = Default.EC2DataPath
+	}
+	if c.EC2AmiCatalog == "" {
+		c.EC2AmiCatalog = Default.EC2AmiCatalog
 	}
 }
 

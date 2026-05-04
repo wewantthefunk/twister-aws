@@ -13,6 +13,7 @@ import (
 	"github.com/christian/twister/internal/awsserver"
 	"github.com/christian/twister/internal/config"
 	"github.com/christian/twister/internal/credentials"
+	"github.com/christian/twister/internal/ec2"
 	"github.com/christian/twister/internal/iam"
 	"github.com/christian/twister/internal/lambda"
 	"github.com/christian/twister/internal/paramstore"
@@ -75,6 +76,17 @@ func main() {
 	lambdaSvc := lambda.NewService(lambdaRoot)
 	sqsSvc.Manager.DequeueHook = lambdaSvc.OnSQSMessages
 
+	ec2Root := getenvFirst([]string{"TWISTER_EC2_DATA_PATH"}, config.ResolveWithDataPath(dataPath, cfg.EC2DataPath))
+	if err := os.MkdirAll(filepath.Clean(ec2Root), 0o750); err != nil {
+		log.Fatalf("ec2 data root %q: %v", ec2Root, err)
+	}
+	ec2Catalog := getenvFirst([]string{"TWISTER_EC2_AMI_CATALOG"}, config.ResolveWithDataPath(dataPath, cfg.EC2AmiCatalog))
+	ec2Public := strings.TrimSpace(os.Getenv("TWISTER_EC2_PUBLIC_HOST"))
+	ec2Svc, err := ec2.NewService(ec2Root, ec2Catalog, ec2Public)
+	if err != nil {
+		log.Fatalf("ec2 service: %v", err)
+	}
+
 	data := secretstore.NewStore()
 
 	secretsCSVPath := getenvFirst([]string{"TWISTER_SECRETS_CSV", "SECRETS_LOCAL_SECRETS_CSV"}, config.ResolveWithDataPath(dataPath, cfg.SecretsCSV))
@@ -119,8 +131,9 @@ func main() {
 		log.Fatal(err)
 	}
 	router.SQS = sqsSvc
+	router.EC2 = ec2Svc
 
-	log.Printf("Twister listening on %s (dataPath=%q, s3Root=%q, sqsRoot=%q, lambdaRoot=%q, %d secrets, %d parameters, %d access keys; secrets CSV %s, parameters CSV %s, creds %s)", cfg.ListenAddress, dataPath, s3Root, sqsRoot, lambdaRoot, data.Count(), pstore.Count(), provider.AccessKeyCount(), secretsCSVPath, parametersCSVPath, credPath)
+	log.Printf("Twister listening on %s (dataPath=%q, s3Root=%q, sqsRoot=%q, lambdaRoot=%q, ec2Root=%q, %d secrets, %d parameters, %d access keys; secrets CSV %s, parameters CSV %s, creds %s)", cfg.ListenAddress, dataPath, s3Root, sqsRoot, lambdaRoot, ec2Root, data.Count(), pstore.Count(), provider.AccessKeyCount(), secretsCSVPath, parametersCSVPath, credPath)
 
 	ref := &awsserver.Refresher{
 		Provider:           provider,
@@ -130,6 +143,7 @@ func main() {
 		ParamStore:         pstore,
 		ParametersCSVPath:  parametersCSVPath,
 		ParametersJSONPath: parametersPath,
+		EC2:                ec2Svc,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", awsserver.Health)

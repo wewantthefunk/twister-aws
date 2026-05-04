@@ -1,6 +1,8 @@
 # Twister — Docker + tests (see .agents/AI_CODING_GUIDE.md for project patterns and AI assistant instructions)
 #   make build   — build the image
-#   make run     — run detached; host path from server.json `mapPath` → /app (see cmd/mappath)
+#   make run     — run detached; host path from `mapPath` → /app. If `DOCKER_SOCK` is a socket (default
+#     /var/run/docker.sock when unset), it is bind-mounted so EC2/Lambda can use the host Docker engine.
+#     Disable: `make run DOCKER_SOCK=`
 #   make stop    — stop any **running** container created from this image (IMAGE:TAG)
 #   make test    — run Go unit tests (go test ./...)
 #
@@ -15,6 +17,9 @@ TAG   ?= latest
 PORT  ?= 8080
 # Human-readable `docker ps` name for `make run` (`make stop` uses the image, not the name)
 CONTAINER_NAME ?= twister
+# Host Docker socket for EC2/Lambda inside the container. Default path is used only when it exists as a
+# socket (see `run` recipe). Set empty to skip: `make run DOCKER_SOCK=`
+DOCKER_SOCK ?= /var/run/docker.sock
 # Config file to read for mapPath (same keys as twister; env TWISTER_SERVER_CONFIG in-container is separate)
 SERVER_JSON ?= server.json
 # Twister IAM endpoint for `make initial` (override if not localhost:$(PORT))
@@ -32,7 +37,16 @@ test:
 # go run ./cmd/mappath prints absolute path from `mapPath` in SERVER_JSON. :z = SELinux relabel.
 run:
 	@P=$$(go run ./cmd/mappath -config "$(SERVER_JSON)"); \
-	docker run -d --rm --name $(CONTAINER_NAME) -p $(PORT):8080 -v "$$P:/app:z" --user "$$(id -u):$$(id -g)" $(IMAGE):$(TAG)
+	EXTRA=; GADD=; \
+	if [ -n "$(DOCKER_SOCK)" ] && [ -S "$(DOCKER_SOCK)" ]; then \
+	  EXTRA="-v $(DOCKER_SOCK):$(DOCKER_SOCK)"; \
+	  if stat -c '%g' "$(DOCKER_SOCK)" >/dev/null 2>&1; then \
+	    GADD="--group-add $$(stat -c '%g' "$(DOCKER_SOCK)")"; \
+	  elif stat -f '%g' "$(DOCKER_SOCK)" >/dev/null 2>&1; then \
+	    GADD="--group-add $$(stat -f '%g' "$(DOCKER_SOCK)")"; \
+	  fi; \
+	fi; \
+	docker run -d --rm --name $(CONTAINER_NAME) -p $(PORT):8080 -v "$$P:/app:z" $$EXTRA $$GADD --user "$$(id -u):$$(id -g)" $(IMAGE):$(TAG)
 
 # Stop by image so it works for `--name` (twister) and auto names (e.g. jolly_hellman)
 stop:

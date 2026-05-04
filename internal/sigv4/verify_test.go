@@ -122,6 +122,56 @@ func TestVerify_acceptsValidSignature_iam(t *testing.T) {
 	}
 }
 
+func TestVerify_acceptsValidSignature_ec2(t *testing.T) {
+	accessKey := "AKTEST"
+	secretKey := "secret"
+	region := "us-east-1"
+	dateStamp := "20200102"
+	amzDate := "20200102T120000Z"
+	body := []byte("Action=DescribeVpcs&Version=2016-11-15")
+	host := "127.0.0.1:8080"
+
+	payloadHash := sha256Hex(body)
+	hdrs := map[string][]string{
+		"content-type":         {"application/x-www-form-urlencoded; charset=utf-8"},
+		"host":                 {host},
+		"x-amz-content-sha256": {payloadHash},
+		"x-amz-date":           {amzDate},
+	}
+	signedNames := []string{"content-type", "host", "x-amz-content-sha256", "x-amz-date"}
+	sort.Strings(signedNames)
+	signedList := strings.Join(signedNames, ";")
+
+	cr := canonicalRequest("POST", "/", "", signedNames, hdrs, payloadHash)
+	crHash := sha256Hex([]byte(cr))
+	credScope := dateStamp + "/" + region + "/ec2/aws4_request"
+	sts := stringToSign(amzDate, credScope, crHash)
+	sig := hmacSHA256(signingKey(secretKey, dateStamp, region, "ec2"), sts)
+	sigHex := hex.EncodeToString(sig)
+
+	u := &url.URL{Scheme: "http", Host: host, Path: "/"}
+	req := &http.Request{
+		Method: "POST",
+		URL:    u,
+		Host:   host,
+		Header: http.Header{
+			"Content-Type":         []string{"application/x-www-form-urlencoded; charset=utf-8"},
+			"X-Amz-Content-Sha256": []string{payloadHash},
+			"X-Amz-Date":           []string{amzDate},
+			"Authorization":        []string{formatAuthorization(accessKey, dateStamp, region, "ec2", signedList, sigHex)},
+		},
+		Body: io.NopCloser(bytes.NewReader(body)),
+	}
+
+	gotRegion, gotSvc, err := Verify(req, body, map[string]string{accessKey: secretKey}, time.Date(2020, 1, 2, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRegion != region || gotSvc != "ec2" {
+		t.Fatalf("region = %q service = %q", gotRegion, gotSvc)
+	}
+}
+
 func TestVerify_acceptsValidSignature_s3_get_queryOutOfOrder(t *testing.T) {
 	accessKey := "AKTEST"
 	secretKey := "secret"
